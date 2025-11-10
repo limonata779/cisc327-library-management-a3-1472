@@ -51,6 +51,7 @@ def test_payment_declined_by_gateway(mocker):
     gateway_double = Mock(spec=PaymentGateway)
     gateway_double.process_payment.return_value = (False, None, "Card declined")
     ok, msg, tx_id = pay_late_fees("778899", 7, payment_gateway=gateway_double)
+
     # Sanity check
     assert ok is False
     assert tx_id is None
@@ -66,7 +67,7 @@ def test_payment_declined_by_gateway(mocker):
 
 
 def test_invalid_patron_id_verify_mock_not_called(mocker):
-    # Test invalid patron ID (verifies mock not called)
+    # Test invalid patron ID (verifies mock NOT called)
     fee_calc_stub = mocker.patch(
         "services.library_service.calculate_late_fee_for_book"
     )
@@ -104,7 +105,7 @@ def test_zero_late_fees_verify_mock_not_called(mocker):
 
 
 def test_network_error_exception_handling(mocker):
-    # Test network error exception handling.
+    """Test network error exception handling."""
     fee_calc_stub = mocker.patch(
         "services.library_service.calculate_late_fee_for_book",
         return_value={"fee_amount": 6.5, "days_overdue": 2, "status": "ok"},
