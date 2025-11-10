@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, ANY
 from datetime import datetime, timedelta
 from services.payment_service import PaymentGateway
 from services.library_service import pay_late_fees, refund_late_fee_payment, add_book_to_catalog, return_book_by_patron
@@ -30,9 +30,9 @@ def test_successful_payment(mocker):
     assert msg == "Payment successful! All good"
 
     # Stubs and mock verified using the required assert_called* helpers
-    fee_calc_stub.assert_called_with("121212", 99)
-    book_lookup_stub.assert_called_with(99)
-    gateway_double.process_payment.assert_called_with(
+    fee_calc_stub.assert_called_once_with("121212", 99)
+    book_lookup_stub.assert_called_once_with(99)
+    gateway_double.process_payment.assert_called_once_with(
         patron_id="121212",
         amount=15,
         description="Late fees for 'The tests'",
@@ -56,15 +56,14 @@ def test_payment_declined_by_gateway(mocker):
     assert ok is False
     assert tx_id is None
     assert msg == "Payment failed: Card declined"
-    fee_calc_stub.assert_called_with("778899", 7)
-    book_lookup_stub.assert_called_with(7)
+    fee_calc_stub.assert_called_once_with("778899", 7)
+    book_lookup_stub.assert_called_once_with(7)
     gateway_double.process_payment.assert_called_once()
-    gateway_double.process_payment.assert_called_with(
+    gateway_double.process_payment.assert_called_once_with(
         patron_id="778899",
         amount=5.00,
         description="Late fees for 'Can't charge me'",
     )
-
 
 def test_invalid_patron_id_verify_mock_not_called(mocker):
     # Test invalid patron ID (verifies mock NOT called)
@@ -87,6 +86,14 @@ def test_invalid_patron_id_verify_mock_not_called(mocker):
 
 
 def test_zero_late_fees_verify_mock_not_called(mocker):
+    active_borrow_stub = mocker.patch(
+        "services.library_service.get_active_borrow",
+        return_value={
+            "book_id": 777,
+            "patron_id": "549821",
+            "due_date": (datetime.now() + timedelta(days=3)).isoformat(),
+        },
+    )
     fee_calc_stub = mocker.patch(
         "services.library_service.calculate_late_fee_for_book",
         return_value={"fee_amount": 0.0, "days_overdue": 0, "status": "ok"},
@@ -96,16 +103,19 @@ def test_zero_late_fees_verify_mock_not_called(mocker):
     )
     gateway_double = Mock(spec=PaymentGateway)
     ok, msg, tx_id = pay_late_fees("549821", 777, payment_gateway=gateway_double)
+
+    # Sanity checks on result and interactions
     assert ok is False
     assert tx_id is None
     assert msg == "No late fees to pay for this book."
-    fee_calc_stub.assert_called_with("549821", 777)
+    fee_calc_stub.assert_called_once_with("549821", 777)
     book_lookup_stub.assert_not_called()
     gateway_double.process_payment.assert_not_called()
+    active_borrow_stub.assert_not_called()
 
 
 def test_network_error_exception_handling(mocker):
-    """Test network error exception handling."""
+    # Test network error exception handling.
     fee_calc_stub = mocker.patch(
         "services.library_service.calculate_late_fee_for_book",
         return_value={"fee_amount": 6.5, "days_overdue": 2, "status": "ok"},
@@ -124,33 +134,27 @@ def test_network_error_exception_handling(mocker):
     assert "Gateway timeout" in msg
     fee_calc_stub.assert_called_with("000000", 65)
     book_lookup_stub.assert_called_with(65)
-    gateway_double.process_payment.assert_called_with(
+    gateway_double.process_payment.assert_called_once_with(
         patron_id="000000",
         amount=6.5,
         description="Late fees for 'CISC327 Book'",
     )
 
-
-
 # refund_late_fee_payment required tests
 
-def test_successful_refund():
+def test_successful_refund(mocker):
     # Test successful refund
-    gateway_double = Mock(spec=PaymentGateway)
+    gateway_double = mocker.Mock(spec=PaymentGateway)
     gateway_double.refund_payment.return_value = (True, "Reversal accepted")
-
-    ok, msg = refund_late_fee_payment(
-        "txn_1", 9.75, payment_gateway=gateway_double
-    )
-
+    ok, msg = refund_late_fee_payment("txn_1", 9.75, payment_gateway=gateway_double)
     assert ok is True
     assert msg == "Reversal accepted"
-    gateway_double.refund_payment.assert_called_with("txn_1", 9.75)
+    gateway_double.refund_payment.assert_called_once()
+    gateway_double.refund_payment.assert_called_once_with("txn_1", 9.75)
 
-
-def test_invalid_transaction_id_rejection():
+def test_invalid_transaction_id_rejection(mocker):
     # Test invalid transaction ID rejection
-    gateway_double = Mock(spec=PaymentGateway)
+    gateway_double = mocker.Mock(spec=PaymentGateway)
     ok, msg = refund_late_fee_payment(
         "receipt_404", 4.20, payment_gateway=gateway_double
     )
@@ -160,9 +164,8 @@ def test_invalid_transaction_id_rejection():
 
 
 def test_invalid_refund_amount_negative():
-    # Test invalid refund amounts (negative)
+    # Test invalid refund amounts-negative
     gateway_double = Mock(spec=PaymentGateway)
-
     ok, msg = refund_late_fee_payment(
         "txn_2", -3.15, payment_gateway=gateway_double
     )
@@ -212,8 +215,8 @@ def test_refund_uses_default_payment_gateway_when_none(mocker):
     # Asserts our stubbed class was used and the happy-path result is returned
     assert ok is True
     assert msg == "Reversal is accepted"
-    gateway_cls_stub.assert_called_with()
-    gateway_double.refund_payment.assert_called_with("txn_50", 5.00)
+    gateway_cls_stub.assert_called_once_with()
+    gateway_double.refund_payment.assert_called_once_with("txn_50", 5.00)
 
 
 def test_refund_gateway_returns_false():
@@ -227,7 +230,7 @@ def test_refund_gateway_returns_false():
     # Asserts status is False and the error text is wrapped correctly
     assert ok is False
     assert msg == "Refund failed: Card expired"
-    gateway_double.refund_payment.assert_called_with("txn_110", 7.00)
+    gateway_double.refund_payment.assert_called_once_with("txn_110", 7.00)
 
 
 def test_refund_gateway_exception_wrapped():
@@ -334,7 +337,7 @@ def test_fails_when_record_update_fails(mocker):
     ok, msg = return_book_by_patron("414141", 333)
     assert ok is False
     assert msg == "Couldn't record the return in the database."
-    record_stub.assert_called_once_with("414141", 333, mocker.ANY)
+    record_stub.assert_called_once_with("414141", 333, ANY)
     stock_stub.assert_not_called()
 
 
